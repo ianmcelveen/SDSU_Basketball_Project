@@ -1,0 +1,786 @@
+---
+title: "
+<p style='text-align: center;'> 
+<img src='SDSUpng.webp' style='width:87px; margin-right:10px;' /> 
+San Diego State Basketball Report 
+<img src='SDSUpng.webp' style='width:87px; margin-right:10px;' /> 
+  "
+author: "Ian McElveen and Taylor Fourier"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup}
+library(ggplot2)
+library(pander)
+library(knitr)
+library(dplyr)
+library(devtools)
+library(ncaahoopR)
+library(tidyverse)
+library(extrafont)
+library(cowplot)
+library(nbastatR)
+library(paletteer)
+
+
+```
+
+```{r team stats}
+#Read in dataset
+SDSUpergamestats = read.csv("SDSUpergame.csv", header = TRUE, row.names = 1)
+
+#Filter data to only include selected columns
+SDSUpergamestats_filtered = SDSUpergamestats %>%
+  dplyr::select(PTS, FG, FG., X3P., AST, TRB, TOV)
+
+# Rename the row names
+row.names(SDSUpergamestats_filtered) <- c("SDSU", "SDSU Conference Rank", "SDSU Opponent", "SDSU Opponent Rank")
+
+# Rename the columns names
+colnames(SDSUpergamestats_filtered) <- c("Points", "Field Goals", "Field Goal %", 
+                                         "3-Point %", "Assists", "Rebounds", "Turnovers")
+
+# Offense Table
+SDSU_Offense <- data.frame(
+  Metric = colnames(SDSUpergamestats_filtered),
+  `SDSU Average (Rank)` = paste0(SDSUpergamestats_filtered["SDSU", ], " (", SDSUpergamestats_filtered["SDSU Conference Rank", ], ")"),
+    check.names = FALSE  # Prevent automatic conversion of column names
+)
+
+# Defense Table
+SDSU_Defense <- data.frame(
+  Metric = c("Points Allowed", "Field Goals Allowed", "Field Goal % Allowed", 
+             "3-Point % Allowed", "Assists Allowed", "Rebounds Allowed", "Turnovers Forced"),
+  `SDSU Average (Rank)` = paste0(SDSUpergamestats_filtered["SDSU Opponent", ], " (", SDSUpergamestats_filtered["SDSU Opponent Rank", ], ")"),
+    check.names = FALSE  # Prevent automatic conversion of column names
+
+)
+
+
+# Adjust pander options
+panderOptions('table.split.table', Inf)  # Prevent splitting tables
+panderOptions('table.split.cells', Inf)  # Prevent splitting cells
+
+# Render Offense Table
+pander(
+  SDSU_Offense, 
+  caption = "<span style='font-size: 20px; font-weight: bold; white-space: nowrap; color: black;'>SDSU Offense per game stats with Conference Rank (Of 11)</span>"
+)
+
+
+# Render Defense Table
+pander(
+  SDSU_Defense, 
+  caption = "<span style='font-size: 20px; font-weight: bold; white-space: nowrap; color: black;'>SDSU Defense per game stats with Conference Rank (Of 11)</span>")
+
+```
+
+
+
+SHOT CHART
+```{r court setup}
+# Creating court and plotting
+
+circle_points = function(center = c(0, 0), radius = 1, npoints = 360) {
+  angles = seq(0, 2 * pi, length.out = npoints)
+  return(data_frame(x = center[1] + radius * cos(angles),
+                    y = center[2] + radius * sin(angles)))
+}
+
+# Court Dimenons & lines
+width = 50
+height = 94 / 2
+key_height = 19
+inner_key_width = 12
+outer_key_width = 16
+backboard_width = 6
+backboard_offset = 4
+neck_length = 0.5
+hoop_radius = 0.75
+hoop_center_y = backboard_offset + neck_length + hoop_radius
+three_point_radius = 23.75
+three_point_side_radius = 22
+three_point_side_height = 14
+
+# Court themes
+court_themes = list(
+  light = list(
+    court = 'floralwhite',
+    lines = '#999999',
+    text = '#222222',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 1,
+    hex_border_color = "#000000"
+  ),
+  dark = list(
+    court = '#000004',
+    lines = '#999999',
+    text = '#f0f0f0',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 0,
+    hex_border_color = "#000000"
+  ),
+  ppt = list(
+    court = 'gray20',
+    lines = 'white',
+    text = '#f0f0f0',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 0,
+    hex_border_color = "gray20"
+)
+)
+
+# Function to create court based on given dimensions
+plot_court = function(court_theme = court_themes$light, use_short_three = FALSE) {
+  if (use_short_three) {
+    three_point_radius = 22
+    three_point_side_height = 0
+  }
+  
+  court_points = data_frame(
+    x = c(width / 2, width / 2, -width / 2, -width / 2, width / 2),
+    y = c(height, 0, 0, height, height),
+    desc = "perimeter"
+  )
+  
+  court_points = bind_rows(court_points , data_frame(
+    x = c(outer_key_width / 2, outer_key_width / 2, -outer_key_width / 2, -outer_key_width / 2),
+    y = c(0, key_height, key_height, 0),
+    desc = "outer_key"
+  ))
+  
+  court_points = bind_rows(court_points , data_frame(
+    x = c(-backboard_width / 2, backboard_width / 2),
+    y = c(backboard_offset, backboard_offset),
+    desc = "backboard"
+  ))
+  
+  court_points = bind_rows(court_points , data_frame(
+    x = c(0, 0), y = c(backboard_offset, backboard_offset + neck_length), desc = "neck"
+  ))
+  
+  foul_circle = circle_points(center = c(0, key_height), radius = inner_key_width / 2)
+  
+  foul_circle_top = filter(foul_circle, y > key_height) %>%
+    mutate(desc = "foul_circle_top")
+  
+  foul_circle_bottom = filter(foul_circle, y < key_height) %>%
+    mutate(
+      angle = atan((y - key_height) / x) * 180 / pi,
+      angle_group = floor((angle - 5.625) / 11.25),
+      desc = paste0("foul_circle_bottom_", angle_group)
+    ) %>%
+    filter(angle_group %% 2 == 0) %>%
+    select(x, y, desc)
+  
+  hoop = circle_points(center = c(0, hoop_center_y), radius = hoop_radius) %>%
+    mutate(desc = "hoop")
+  
+  restricted = circle_points(center = c(0, hoop_center_y), radius = 4) %>%
+    filter(y >= hoop_center_y) %>%
+    mutate(desc = "restricted")
+  
+  three_point_circle = circle_points(center = c(0, hoop_center_y), radius = three_point_radius) %>%
+    filter(y >= three_point_side_height, y >= hoop_center_y)
+  
+  three_point_line = data_frame(
+    x = c(three_point_side_radius, three_point_side_radius, three_point_circle$x, -three_point_side_radius, -three_point_side_radius),
+    y = c(0, three_point_side_height, three_point_circle$y, three_point_side_height, 0),
+    desc = "three_point_line"
+  )
+  
+  court_points = bind_rows(
+    court_points,
+    foul_circle_top,
+    foul_circle_bottom,
+    hoop,
+    restricted,
+    three_point_line
+  )
+  
+  
+  court_points <- court_points
+  
+  # Final plot creation
+  ggplot() +
+    geom_path(
+      data = court_points,
+      aes(x = x, y = y, group = desc),
+      color = court_theme$lines
+    ) +
+    coord_fixed(ylim = c(0, 45), xlim = c(-25, 25)) +
+    theme_minimal(base_size = 22) +
+    theme(
+      text = element_text(color = court_theme$text),
+      plot.background = element_rect(fill = 'gray20', color = 'gray20'),
+      panel.background = element_rect(fill = court_theme$court, color = court_theme$court),
+      panel.grid = element_blank(),
+      panel.border = element_blank(),
+      axis.text = element_blank(),
+      axis.title = element_blank(),
+      axis.ticks = element_blank(),
+      legend.background = element_rect(fill = court_theme$court, color = court_theme$court),
+      legend.margin = margin(-1, 0, 0, 0, unit = "lines"),
+      legend.position = "bottom",
+      legend.key = element_blank(),
+      legend.text = element_text(size = rel(1.0))
+    )
+}
+
+```
+
+
+```{r UNM shot chart}
+# SDSU vs. UNM
+
+# Get Schedule with game IDs
+sdsu_schedule = get_schedule("San Diego State", season = "2023-24")
+
+# Get specific game id (UAB)
+sdsu_ids = sdsu_schedule$game_id[34]
+
+# get all shots from this game(s) this includes both teams
+UNMSdsu_shots = get_shot_locs(sdsu_ids)
+
+# Filter to just get shots for SDSU
+sdsu_shots2 = UNMSdsu_shots %>% filter(team_name == "San Diego St")
+
+# Mutations
+sdsu_shots2 <- sdsu_shots2 %>% mutate(temp = x, x = y, y = temp) %>% dplyr::select(-temp)
+#sdsu_shots2 <- sdsu_shots2 %>% mutate(x= x*-1)
+#sdsu_shots2 <- sdsu_shots2 %>% mutate(y = 46-y)  
+sdsu_shots2 = sdsu_shots2 %>% mutate(y= y*-1)
+  #sdsu_shots2 = sdsu_shots2 %>% mutate(x=x*0)
+  #sdsu_shots2 = sdsu_shots2 %>% mutate(y=y*0)
+sdsu_shots2 = sdsu_shots2 %>% mutate(y=y+45)
+
+
+# Plot Coordinates
+p1 = plot_court(court_themes$ppt, use_short_three = T) +
+  geom_point(data = sdsu_shots2, ggplot2::aes(x = x, y = y, color = outcome, fill = outcome), 
+             size = 3, shape = 21, stroke = .5) +  
+  scale_color_manual(values = c("green4","red3"), aesthetics = "color", labels=c("made", "missed")) +
+  scale_fill_manual(values = c("green2","gray20"), aesthetics = "fill", labels=c("made", "missed")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.position = c(.5, .85),
+        legend.direction = "horizontal",
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  ggtitle(label = "SDSU shot chart vs. UNM",
+          subtitle = "Loss 61-68, 20/56 (35.7%) FG, 4/20 (20.0%) 3P") 
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray20", color = NA)) 
+
+
+palette <- paletteer::paletteer_d("RColorBrewer::YlOrRd", direction = -1)
+
+p1 <- plot_court(court_themes$ppt, use_short_three = T) + 
+  geom_density_2d_filled(sdsu_shots2, mapping = aes(x=x,y=y,fill = ..level..,), 
+                         contour_var = "ndensity", breaks = seq(0.1, 1.0, length.out = 10), alpha = .5)  + 
+  scale_fill_manual(values = c(palette), aesthetics = c("fill", "color")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  labs(title = "SDSU Shot Heatmap vs. UNM",
+          subtitle = "Loss 61-68, 20/56 (35.7%) FG, 4/20 (20.0%) 3P")
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray15", color = NA)) 
+
+```
+
+
+
+```{r UAB shot chart}
+# SDSU vs. UAB (W)
+
+# Get Schedule with game IDs
+sdsu_schedule = get_schedule("San Diego State", season = "2023-24")
+
+# Get specific game id (UAB)
+sdsu_ids = sdsu_schedule$game_id[35]
+
+# get all shots from this game(s) this includes both teams
+UabSdsu_shots = get_shot_locs(sdsu_ids)
+
+# Filter to just get shots for SDSU
+sdsu_shots = UabSdsu_shots %>% filter(team_name == "San Diego St")
+
+# Mutations
+sdsu_shots <- sdsu_shots %>% mutate(temp = x, x = y, y = temp) %>% select(-temp)
+#sdsu_shots <- sdsu_shots %>% mutate(x= x*-1)
+sdsu_shots <- sdsu_shots %>% mutate(y = 46-y)  
+#sdsu_shots = sdsu_shots %>% mutate(y= y*-1)
+  #sdsu_shots = sdsu_shots %>% mutate(x=x*0)
+  #sdsu_shots = sdsu_shots %>% mutate(y=y*0)
+  #sdsu_shots = sdsu_shots %>% mutate(y=y+45)
+
+
+# Plot Coordinates
+p1 = plot_court(court_themes$ppt, use_short_three = T) +
+  geom_point(data = sdsu_shots, aes(x = x, y = y, color = outcome, fill = outcome), 
+             size = 3, shape = 21, stroke = .5) +  
+  scale_color_manual(values = c("green4","red3"), aesthetics = "color", labels=c("made", "missed")) +
+  scale_fill_manual(values = c("green2","gray20"), aesthetics = "fill", labels=c("made", "missed")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.position = c(.5, .85),
+        legend.direction = "horizontal",
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  ggtitle(label = "SDSU shot chart vs. UAB",
+          subtitle = "Win 69-65, 24/55 (43.6%) FG, 5/18 (27.8%) 3P") 
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray20", color = NA)) 
+
+
+#Heat Map:
+palette <- paletteer::paletteer_d("RColorBrewer::YlOrRd", direction = -1)
+
+p1 <- plot_court(court_themes$ppt, use_short_three = T) + 
+  geom_density_2d_filled(sdsu_shots, mapping = aes(x=x,y=y,fill = ..level..,), 
+                         contour_var = "ndensity", breaks = seq(0.1, 1.0, length.out = 10), alpha = .5)  + 
+  scale_fill_manual(values = c(palette), aesthetics = c("fill", "color")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  labs(title = "SDSU Shot Heatmap vs. UAB",
+          subtitle = "Win 69-65, 24/55 (43.6%) FG, 5/18 (27.8%) 3P")
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray15", color = NA)) 
+
+```
+
+
+
+```{r UCONN}
+# SDSU vs. UConn (L)
+
+# Get Schedule with game IDs
+sdsu_schedule = get_schedule("San Diego State", season = "2023-24")
+
+# Get specific game id (UConn)
+sdsu_ids = sdsu_schedule$game_id[37]
+
+# get all shots from this game(s) this includes both teams
+UConnSdsu_shots = get_shot_locs(sdsu_ids)
+
+# Filter to just get shots for SDSU
+sdsu_shots1 = UConnSdsu_shots %>% filter(team_name == "San Diego St")
+
+# Mutations
+sdsu_shots1 <- sdsu_shots1 %>% mutate(temp = x, x = y, y = temp) %>% select(-temp)
+#sdsu_shots1 <- sdsu_shots1 %>% mutate(x= x*-1)
+#sdsu_shots1 <- sdsu_shots1 %>% mutate(y = 46-y)  
+#sdsu_shots1 = sdsu_shots1 %>% mutate(y= y*-1)
+  #sdsu_shots1 = sdsu_shots1 %>% mutate(x=x*0)
+  #sdsu_shots1 = sdsu_shots1 %>% mutate(y=y*0)
+sdsu_shots1 = sdsu_shots1 %>% mutate(y=y+45)
+# Mutate y values for the away team
+
+
+
+# Plot Coordinates
+p1 = plot_court(court_themes$ppt, use_short_three = T) +
+  geom_point(data = sdsu_shots1, aes(x = x, y = y, color = outcome, fill = outcome), 
+             size = 3, shape = 21, stroke = .5) +  
+  scale_color_manual(values = c("green4","red3"), aesthetics = "color", labels=c("made", "missed")) +
+  scale_fill_manual(values = c("green2","gray20"), aesthetics = "fill", labels=c("made", "missed")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.position = c(.5, .85),
+        legend.direction = "horizontal",
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  ggtitle(label = "SDSU shots vs. UConn",
+          subtitle = "Loss 52-82, 21/58 (36.2%) FG, 5/22 (22.7%) 3P") 
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray20", color = NA)) 
+
+
+
+#HeatMap
+palette <- paletteer::paletteer_d("RColorBrewer::YlOrRd", direction = -1)
+
+p1 <- plot_court(court_themes$ppt, use_short_three = T) + 
+  geom_density_2d_filled(sdsu_shots1, mapping = aes(x=x,y=y,fill = ..level..,), 
+                         contour_var = "ndensity", breaks = seq(0.1, 1.0, length.out = 10), alpha = .5)  + 
+  scale_fill_manual(values = c(palette), aesthetics = c("fill", "color")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  labs(title = "SDSU Shot Heatmap vs. UConn",
+          subtitle = "Loss 52-82, 21/58 (36.2%) FG, 5/22 (22.7%) 3P")
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray15", color = NA)) 
+
+```
+
+
+```{r Yale shot chart}
+# SDSU vs. Yale
+
+# Get Schedule with game IDs
+sdsu_schedule = get_schedule("San Diego State", season = "2023-24")
+
+# Get specific game id (UAB)
+sdsu_ids = sdsu_schedule$game_id[36]
+
+# get all shots from this game(s) this includes both teams
+YaleSdsu_shots = get_shot_locs(sdsu_ids)
+
+# Filter to just get shots for SDSU
+sdsu_shots3 = YaleSdsu_shots %>% filter(team_name == "San Diego St")
+
+# Mutations
+sdsu_shots3 <- sdsu_shots3 %>% mutate(temp = x, x = y, y = temp) %>% select(-temp)
+#sdsu_shots3 <- sdsu_shots3 %>% mutate(x= x*-1)
+sdsu_shots3 <- sdsu_shots3 %>% mutate(y = 46-y)  
+#sdsu_shots3 = sdsu_shots3 %>% mutate(y= y*-1)
+  #sdsu_shots3 = sdsu_shots3 %>% mutate(x=x*0)
+  #sdsu_shots3 = sdsu_shots3 %>% mutate(y=y*0)
+  #sdsu_shots3 = sdsu_shots3 %>% mutate(y=y+45)
+
+
+# Plot Coordinates
+p1 = plot_court(court_themes$ppt, use_short_three = T) +
+  geom_point(data = sdsu_shots3, aes(x = x, y = y, color = outcome, fill = outcome), 
+             size = 3, shape = 21, stroke = .5) +  
+  scale_color_manual(values = c("green4","red3"), aesthetics = "color", labels=c("made", "missed")) +
+  scale_fill_manual(values = c("green2","gray20"), aesthetics = "fill", labels=c("made", "missed")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.position = c(.5, .85),
+        legend.direction = "horizontal",
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  ggtitle(label = "SDSU shots vs. Yale",
+          subtitle = "Win 85-57, 29/55 (52.7%) FG, 13/27 (48.1%) 3P") 
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray20", color = NA)) 
+
+
+
+#Heat Map
+palette <- paletteer::paletteer_d("RColorBrewer::YlOrRd", direction = -1)
+
+p1 <- plot_court(court_themes$ppt, use_short_three = T) + 
+  geom_density_2d_filled(sdsu_shots3, mapping = aes(x=x,y=y,fill = ..level..,), 
+                         contour_var = "ndensity", breaks = seq(0.1, 1.0, length.out = 10), alpha = .5)  + 
+  scale_fill_manual(values = c(palette), aesthetics = c("fill", "color")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  labs(title = "SDSU Shot Heatmap vs. Yale",
+          subtitle = "Win 85-57, 29/55 (52.7%) FG, 13/27 (48.1%) 3P")
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray15", color = NA)) 
+
+```
+
+
+```{r shot chart multiple games}
+# SDSU post season shots
+
+# Get Schedule with game IDs
+sdsu_schedule = get_schedule("San Diego State", season = "2023-24")
+
+# Get specific game id
+sdsu_ids = sdsu_schedule$game_id[1:37]
+
+# get all shots from this game(s) this includes both teams
+shots = get_shot_locs(sdsu_ids)
+
+# Filter to just get shots for SDSU
+sdsu_shots4 = shots %>% filter(team_name == "San Diego St")
+
+# Mutations
+sdsu_shots4 <- sdsu_shots4 %>% mutate(temp = x, x = y, y = temp) %>% select(-temp)
+#sdsu_shots4 <- sdsu_shots4 %>% mutate(x= x*-1)
+sdsu_shots4 <- sdsu_shots4 %>%
+  mutate(y = ifelse(shooting_team == "away", y + 46, y))
+sdsu_shots4 <- sdsu_shots4 %>%
+  mutate(y = ifelse(shooting_team == "home", 46 - y, y))#sdsu_shots4 = sdsu_shots4 %>% mutate(y= y*-1)
+  #sdsu_shots4 = sdsu_shots4 %>% mutate(x=x*0)
+  #sdsu_shots4 = sdsu_shots4 %>% mutate(y=y*0)
+  #sdsu_shots4 = sdsu_shots4 %>% mutate(y=y+45)
+
+
+# Plot Coordinates
+p1 = plot_court(court_themes$ppt, use_short_three = T) +
+  geom_point(data = sdsu_shots4, aes(x = x, y = y, color = outcome, fill = outcome), 
+             size = 3, shape = 21, stroke = .5) +  
+  scale_color_manual(values = c("green4","red3"), aesthetics = "color", labels=c("made", "missed")) +
+  scale_fill_manual(values = c("green2","gray20"), aesthetics = "fill", labels=c("made", "missed")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.position = c(.5, .85),
+        legend.direction = "horizontal",
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  ggtitle(label = "SDSU Shot Chart",
+          subtitle = "2024 Postseason") 
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray20", color = NA)) 
+
+
+# Heat Map:
+heatmap_shots = sdsu_shots4 %>% filter(outcome == "made")
+
+palette <- paletteer::paletteer_d("RColorBrewer::YlOrRd", direction = -1)
+
+p1 <- plot_court(court_themes$ppt, use_short_three = T) + 
+  geom_density_2d_filled(heatmap_shots, mapping = aes(x=x,y=y,fill = ..level..,), 
+                         contour_var = "ndensity", breaks = seq(0.1, 1.0, length.out = 10), alpha = .5)  + 
+  scale_fill_manual(values = c(palette), aesthetics = c("fill", "color")) +
+  scale_x_continuous(limits = c(-27.5, 27.5)) + 
+  scale_y_continuous(limits = c(0, 45)) +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = .5, size = 22, family = "Comic Sans MS", face = "bold", vjust = -4),
+        plot.subtitle = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", vjust = -8),
+        legend.title = element_blank(),
+        legend.text = element_text(hjust = .5, size = 10, family = "Comic Sans MS", face = "bold", colour = "white"),
+        plot.caption = element_text(hjust = .5, size = 6, family = "Comic Sans MS", face = "bold", colour = "lightgrey", vjust = 8)) +
+  labs(title = "SDSU Made Shots Heatmap",
+          subtitle = "2024 Post Season")
+
+ggdraw(p1) + theme(plot.background = element_rect(fill="gray15", color = NA)) 
+
+```
+
+```{r probability heatmap}
+# Ensure 'outcome' column is numeric (1 for made, 0 for missed)
+sdsu_shots4$outcome <- ifelse(sdsu_shots4$outcome == "made", 1, 0)
+
+# Create the zones by dividing the court into 5x5 grid (same as before)
+sdsu_shots4 <- sdsu_shots4 %>%
+  filter(between(x, -25, 25), between(y, 5, 30))  # Filter data within court bounds
+
+# Define the x and y breaks for the grid
+x_breaks <- seq(-25, 25, length.out = 11)  # 10 horizontal zones (from -25 to 25)
+y_breaks <- seq(5, 30, length.out = 6)    # 5 vertical zones (from 5 to 30)
+
+# Assign shots to zones
+sdsu_shots4 <- sdsu_shots4 %>%
+  mutate(
+    x_zone = cut(x, breaks = x_breaks, labels = 1:10, include.lowest = TRUE),
+    y_zone = cut(y, breaks = y_breaks, labels = 1:5, include.lowest = TRUE),
+    zone = paste(x_zone, y_zone, sep = "-")  # Create the 'zone' column
+  )
+
+# Calculate the total shots and made shots in each zone
+zone_probabilities <- sdsu_shots4 %>%
+  group_by(zone) %>%
+  summarize(
+    made_shots = sum(outcome == 1, na.rm = TRUE),      # Count of made shots
+    total_shots = n(),                                 # Total number of shots (made + missed)
+    probability = made_shots / total_shots             # Probability = made shots / total shots
+  ) %>%
+  separate(zone, into = c("x_zone", "y_zone"), sep = "-") %>%
+  mutate(
+    # Calculate midpoints for positioning the zones on the court
+    x_mid = as.numeric(x_zone) * 5 - 27.5,  # Shift midpoint for x-direction, 5 width
+    y_mid = as.numeric(y_zone) * 5 + 2.5   # Shift midpoint for y-direction, 5 height
+  )
+
+# Create the plot with colored zones based on probability
+p1 <- plot_court(court_themes$ppt, use_short_three = T) + 
+  # Overlay colored zones based on probability
+  geom_tile(data = zone_probabilities, 
+            aes(x = x_mid, y = y_mid, fill = probability), 
+            width = 5, height = 5, alpha = 0.8) +  # Set width and height to 5
+  scale_fill_gradientn(colors = c("red3", "yellow", "green2"), name = "Shot Probability") +  # Adjusted color scale
+  scale_x_continuous(limits = c(-25, 25)) + 
+  scale_y_continuous(limits = c(5, 30)) + 
+  theme_minimal() + 
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, size = 22, family = "Comic Sans MS", face = "bold", color = "white", vjust = -4),
+    plot.subtitle = element_text(hjust = 0.5, size = 10, family = "Comic Sans MS", face = "bold", color = "white", vjust = -8),
+    plot.caption = element_text(hjust = 0.5, size = 6, family = "Comic Sans MS", face = "bold", color = "lightgrey", vjust = 8),
+    legend.text = element_text(colour = "white"),  # Set the legend text color to white
+    legend.title = element_text(colour = "white")
+  ) + 
+  labs(
+    title = "SDSU Shot Probability by Zone",
+    subtitle = "Zones colored from red (low) to green (high)"
+  )
+
+# Display the plot
+ggdraw(p1) + theme(plot.background = element_rect(fill = "gray15", color = NA))
+
+
+
+```
+
+
+
+
+```{r correlation}
+# Read in csv file
+SDSUgamedata = read.csv("SDSU game data(Sheet1).csv")
+
+# Change column names to make it clear
+colnames(SDSUgamedata)[colnames(SDSUgamedata) == "Tm"] <- "Points"
+colnames(SDSUgamedata)[colnames(SDSUgamedata) == "Opp.1"] <- "Opponent Points"
+colnames(SDSUgamedata)[colnames(SDSUgamedata) == "FG."] <- "FG%"
+colnames(SDSUgamedata)[colnames(SDSUgamedata) == "X3P"] <- "3PM"
+colnames(SDSUgamedata)[colnames(SDSUgamedata) == "X3PA"] <- "3PA"
+colnames(SDSUgamedata)[colnames(SDSUgamedata) == "X3P."] <- "3P%"
+colnames(SDSUgamedata)[colnames(SDSUgamedata) == "FT."] <- "FT%"
+
+# Select numeric columns
+selected_columns <- SDSUgamedata %>%
+  select(W.L, Points, `Opponent Points`, FG, FGA, `FG%`, `3PM`, `3PA`, `3P%`, FT, FTA, `FT%`, ORB, TRB, AST, STL, BLK, TOV, PF)
+
+# Calculate the correlation of each metric with W/L
+correlation_results <- sapply(selected_columns[, -1], function(x) cor(x, selected_columns$W.L, use = "complete.obs"))
+
+# Sort the correlation results in descending order to get the most correlated metrics
+sorted_correlations <- sort(correlation_results, decreasing = TRUE)
+
+# Create a data frame with the sorted correlations
+sorted_correlations_df <- data.frame(Metric = names(sorted_correlations), 
+                                     Correlation = sorted_correlations, 
+                                     row.names = NULL)
+
+# Display with pander and title
+pander(sorted_correlations_df, caption = "Most Correlated Metrics with Win/Loss")
+
+```
+
+```{r normalize weights}
+# Correlation values for the selected metrics
+correlations <- c(Points = 0.5734, `FG%` = 0.4563, 
+                  `3P%` = 0.391, FTA = 0.345, 
+                  TRB = 0.3446, PF = -0.3241, TOV = -0.1218)
+
+# Split positive and negative correlations
+positive_metrics <- correlations[correlations > 0]
+negative_metrics <- correlations[correlations < 0]
+
+# Calculate the sum of absolute correlations for positive and negative metrics
+sum_positive <- sum(positive_metrics)
+sum_negative <- sum(abs(negative_metrics))
+
+# Normalize positive weights
+positive_weights <- positive_metrics / sum_positive
+
+# Normalize negative weights
+negative_weights <- abs(negative_metrics) / sum_negative
+
+# Combine the weights into a single data frame
+normalized_weights <- data.frame(
+  Metric = names(correlations),
+  Correlation = correlations,
+  Weight = c(positive_weights, negative_weights)
+)
+
+# Display the result
+pander(normalized_weights, row.names = FALSE)
+
+```
+
+```{r player ranking formula}
+player_stats = read.csv("SDSUper40.csv")
+
+colnames(player_stats) <- c(
+  "Rank", "Player", "Games", "Games_Started", "Minutes", "FGM", "FGA", "FG%", 
+  "2PM", "2PA", "2P%", "3PM", "3PA", "3P%", "FTM", "FTA", "FT%", 
+  "TRB", "AST", "STL", "BLK", "TOV", "PF", "Points", "Position"
+)
+
+# Normalize the player stats (similar to the previous normalization process)
+normalize <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+# Apply the normalization to the selected columns
+player_stats$Normalized_Points <- normalize(player_stats$Points)
+player_stats$Normalized_FG_percent <- normalize(player_stats$`FG%`)
+player_stats$Normalized_X3P_percent <- normalize(player_stats$`3P%`)
+player_stats$Normalized_FTA <- normalize(player_stats$FTA)
+player_stats$Normalized_TRB <- normalize(player_stats$TRB)
+player_stats$Normalized_PF <- normalize(player_stats$PF)
+player_stats$Normalized_TOV <- normalize(player_stats$TOV)
+
+# Apply weights to the normalized metrics and calculate total score for each player
+player_stats$Score <- (
+  player_stats$Normalized_Points * normalized_weights$Weight[normalized_weights$Metric == "Points"] +
+  player_stats$Normalized_FG_percent * normalized_weights$Weight[normalized_weights$Metric == "FG_percent"] +
+  player_stats$Normalized_X3P_percent * normalized_weights$Weight[normalized_weights$Metric == "X3P_percent"] +
+  player_stats$Normalized_FTA * normalized_weights$Weight[normalized_weights$Metric == "FTA"] +
+  player_stats$Normalized_TRB * normalized_weights$Weight[normalized_weights$Metric == "TRB"] -
+  player_stats$Normalized_PF * normalized_weights$Weight[normalized_weights$Metric == "PF"] -
+  player_stats$Normalized_TOV * normalized_weights$Weight[normalized_weights$Metric == "TOV"]
+)
+
+# Rank players by their total score (highest score first)
+player_stats$Rank <- rank(-player_stats$Score)  # Negative sign to rank from highest to lowest
+
+# Separate the players into guards and forwards based on their position
+guards <- player_stats[player_stats$Position == "G", ]
+forwards <- player_stats[player_stats$Position == "F", ]
+
+# Select the top 3 guards and top 2 forwards based on their score
+top_guards <- guards[order(guards$Score, decreasing = TRUE), ][1:3, ]
+top_forwards <- forwards[order(forwards$Score, decreasing = TRUE), ][1:2, ]
+
+# Combine the top guards and forwards into the starting lineup
+starting_lineup <- rbind(top_guards, top_forwards)
+
+# View the starting lineup
+pander(starting_lineup[, c("Player", "Position", "Score")], row.names = FALSE, caption = "<span style='font-size: 20px; font-weight: bold; color: black;'>Best Starting Lineup</span>")
+
+
+
+# Create a summary table with each player's name, score, rank, and position
+player_summary <- player_stats[, c("Player", "Score", "Rank", "Position")]
+
+# Sort the table by rank
+player_summary <- player_summary[order(player_summary$Rank), ]
+
+# Display the summary table
+pander(player_summary, row.names = FALSE, caption = "<span style='font-size: 20px; font-weight: bold; color: black;'>Player Rankings</span>")
+```
+
